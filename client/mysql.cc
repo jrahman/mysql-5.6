@@ -285,6 +285,7 @@ static int com_nopager(String *str, char*), com_pager(String *str, char*),
 #endif
 
 static int read_and_execute(bool interactive);
+static void configure_ssl(MYSQL* mysql);
 static int sql_connect(char *host,char *database,char *user,char *password,
 		       uint silent);
 static const char *server_version_string(MYSQL *mysql);
@@ -1291,6 +1292,8 @@ int main(int argc,char *argv[])
   {
     quick= 1;					// Avoid history
     status.exit_status= 1;
+    // TODO (jprahman): Debug
+    tee_fprintf(stdout, "sql_connect() failed");
     mysql_end(-1);
   }
   if (!status.batch)
@@ -1398,6 +1401,8 @@ int main(int argc,char *argv[])
   status.exit_status= read_and_execute(!status.batch);
   if (opt_outfile)
     end_tee();
+  // TODO (jprahman): Debug
+  tee_fprintf(stdout, "Normal termination");
   mysql_end(0);
 
 #ifndef _lint
@@ -1414,6 +1419,8 @@ static void* ssl_session = nullptr;
 
 sig_handler mysql_end(int sig)
 {
+  // TODO (jprahman): Debug
+  tee_fprintf(stdout, "mysql_end(%d)", sig);
 #ifndef _WIN32
   /*
     Ingnoring SIGQUIT, SIGINT and SIGHUP signals when cleanup process starts.
@@ -1501,6 +1508,7 @@ sig_handler handle_kill_signal(int sig)
   mysql_options(kill_mysql, MYSQL_OPT_CONNECT_ATTR_RESET, 0);
   mysql_options4(kill_mysql, MYSQL_OPT_CONNECT_ATTR_ADD,
                  "program_name", "mysql");
+  configure_ssl(kill_mysql);
   if (!mysql_real_connect(kill_mysql,current_host, current_user, opt_password,
                           "", opt_mysql_port, opt_mysql_unix_port,0))
   {
@@ -1537,6 +1545,8 @@ err:
   mysql_thread_end();
   return;
 #else
+  // TODO (jprahman): Debug
+  tee_fprintf(stdout, "Signal handler calling mysql_end(sig)");
   mysql_end(sig);
 #endif  
 }
@@ -2178,6 +2188,8 @@ static int read_and_execute(bool interactive)
     // End of file or system error
     if (!line)
     {
+      // TODO (jprahman): Debug
+      tee_fprintf(stdout, "No line");
       if (status.line_buff && status.line_buff->error)
         status.exit_status= 1;
       else
@@ -2192,8 +2204,11 @@ static int read_and_execute(bool interactive)
     if ((named_cmds || glob_buffer.is_empty())
 	&& !ml_comment && !in_string && (com= find_command(line)))
     {
-      if ((*com->func)(&glob_buffer,line) > 0)
-	break;
+      if ((*com->func)(&glob_buffer,line) > 0) {
+        // TODO (jprahman): Debug
+        tee_fprintf(stdout, "Command failed");
+        break;
+      }
       if (glob_buffer.is_empty())		// If buffer was emptied
 	in_string=0;
 #ifdef HAVE_READLINE
@@ -4760,23 +4775,9 @@ sql_real_connect(char *host,char *database,char *user,char *password,
     mysql_options(&mysql, MYSQL_SECURE_AUTH, (char *) &opt_secure_auth);
   if (using_opt_local_infile)
     mysql_options(&mysql,MYSQL_OPT_LOCAL_INFILE, (char*) &opt_local_infile);
-#if defined(HAVE_OPENSSL) && !defined(EMBEDDED_LIBRARY)
-  if (opt_use_ssl)
-  {
-    if (ssl_context)
-      mysql_options(&mysql, MYSQL_OPT_SSL_CONTEXT, ssl_context);
-    else {
-      mysql_ssl_set(&mysql, opt_ssl_key, opt_ssl_cert, opt_ssl_ca,
-        opt_ssl_capath, opt_ssl_cipher);
-      mysql_options(&mysql, MYSQL_OPT_SSL_CRL, opt_ssl_crl);
-      mysql_options(&mysql, MYSQL_OPT_SSL_CRLPATH, opt_ssl_crlpath);
-    }
-    if (ssl_session)
-      mysql_options4(&mysql, MYSQL_OPT_SSL_SESSION, ssl_session, FALSE);
-  }
-  mysql_options(&mysql,MYSQL_OPT_SSL_VERIFY_SERVER_CERT,
-                (char*)&opt_ssl_verify_server_cert);
-#endif
+
+  configure_ssl(&mysql);
+
   if (opt_protocol)
     mysql_options(&mysql,MYSQL_OPT_PROTOCOL,(char*)&opt_protocol);
 #ifdef HAVE_SMEM
@@ -4908,6 +4909,26 @@ sql_real_connect(char *host,char *database,char *user,char *password,
   return 0;
 }
 
+static void
+configure_ssl(MYSQL* mysql) {
+  #if defined(HAVE_OPENSSL) && !defined(EMBEDDED_LIBRARY)
+    if (opt_use_ssl)
+    {
+      if (ssl_context)
+        mysql_options(mysql, MYSQL_OPT_SSL_CONTEXT, ssl_context);
+      else {
+        mysql_ssl_set(mysql, opt_ssl_key, opt_ssl_cert, opt_ssl_ca,
+          opt_ssl_capath, opt_ssl_cipher);
+        mysql_options(mysql, MYSQL_OPT_SSL_CRL, opt_ssl_crl);
+        mysql_options(mysql, MYSQL_OPT_SSL_CRLPATH, opt_ssl_crlpath);
+      }
+      if (ssl_session)
+        mysql_options4(mysql, MYSQL_OPT_SSL_SESSION, ssl_session, FALSE);
+    }
+    mysql_options(mysql,MYSQL_OPT_SSL_VERIFY_SERVER_CERT,
+                  (char*)&opt_ssl_verify_server_cert);
+  #endif
+}
 
 static int
 sql_connect(char *host,char *database,char *user,char *password,uint silent)
